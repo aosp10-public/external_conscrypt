@@ -34,6 +34,7 @@
 
 #include <openssl/aead.h>
 #include <openssl/asn1.h>
+#include <openssl/chacha.h>
 #include <openssl/engine.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -1543,6 +1544,40 @@ static jobjectArray NativeCrypto_get_RSA_private_params(JNIEnv* env, jclass, job
     }
 
     return joa;
+}
+
+static void NativeCrypto_chacha20_encrypt_decrypt(JNIEnv* env, jclass, jbyteArray inBytes,
+        jint inOffset, jbyteArray outBytes, jint outOffset, jint length, jbyteArray keyBytes,
+        jbyteArray nonceBytes, jint blockCounter) {
+    JNI_TRACE("chacha20_encrypt_decrypt");
+    ScopedByteArrayRO in(env, inBytes);
+    if (in.get() == nullptr) {
+        JNI_TRACE("chacha20_encrypt_decrypt => threw exception: could not read input bytes");
+        return;
+    }
+    ScopedByteArrayRW out(env, outBytes);
+    if (out.get() == nullptr) {
+        JNI_TRACE("chacha20_encrypt_decrypt => threw exception: could not read output bytes");
+        return;
+    }
+    ScopedByteArrayRO key(env, keyBytes);
+    if (key.get() == nullptr) {
+        JNI_TRACE("chacha20_encrypt_decrypt => threw exception: could not read key bytes");
+        return;
+    }
+    ScopedByteArrayRO nonce(env, nonceBytes);
+    if (nonce.get() == nullptr) {
+        JNI_TRACE("chacha20_encrypt_decrypt => threw exception: could not read nonce bytes");
+        return;
+    }
+
+    CRYPTO_chacha_20(
+            reinterpret_cast<unsigned char*>(out.get()) + outOffset,
+            reinterpret_cast<const unsigned char*>(in.get()) + inOffset,
+            length,
+            reinterpret_cast<const unsigned char*>(key.get()),
+            reinterpret_cast<const unsigned char*>(nonce.get()),
+            blockCounter);
 }
 
 static jlong NativeCrypto_EC_GROUP_new_by_curve_name(JNIEnv* env, jclass, jstring curveNameJava) {
@@ -5446,7 +5481,7 @@ static jbyteArray NativeCrypto_X509_REVOKED_get_ext_oid(JNIEnv* env, jclass, jlo
             env, revoked, oidString);
 }
 
-template <typename T, int (*get_ext_by_critical_func)(T*, int, int),
+template <typename T, typename C, C T::*member, int (*get_ext_by_critical_func)(T*, int, int),
           X509_EXTENSION* (*get_ext_func)(T*, int)>
 static jobjectArray get_X509Type_ext_oids(JNIEnv* env, jlong x509Ref, jint critical) {
     T* x509 = reinterpret_cast<T*>(static_cast<uintptr_t>(x509Ref));
@@ -5455,6 +5490,11 @@ static jobjectArray get_X509Type_ext_oids(JNIEnv* env, jlong x509Ref, jint criti
     if (x509 == nullptr) {
         conscrypt::jniutil::jniThrowNullPointerException(env, "x509 == null");
         JNI_TRACE("get_X509Type_ext_oids(%p, %d) => x509 == null", x509, critical);
+        return nullptr;
+    }
+    if (member != nullptr && x509->*member == nullptr) {
+        conscrypt::jniutil::jniThrowNullPointerException(env, "x509->*member == null");
+        JNI_TRACE("get_X509Type_ext_oids(%p, %d) => x509->*member == null", x509, critical);
         return nullptr;
     }
 
@@ -5495,24 +5535,24 @@ static jobjectArray NativeCrypto_get_X509_ext_oids(JNIEnv* env, jclass, jlong x5
                                                    jint critical) {
     // NOLINTNEXTLINE(runtime/int)
     JNI_TRACE("get_X509_ext_oids(0x%llx, %d)", (long long)x509Ref, critical);
-    return get_X509Type_ext_oids<X509, X509_get_ext_by_critical, X509_get_ext>(env, x509Ref,
-                                                                               critical);
+    return get_X509Type_ext_oids<X509, decltype(X509::cert_info), &X509::cert_info,
+            X509_get_ext_by_critical, X509_get_ext>(env, x509Ref, critical);
 }
 
 static jobjectArray NativeCrypto_get_X509_CRL_ext_oids(JNIEnv* env, jclass, jlong x509CrlRef,
                                                        jint critical) {
     // NOLINTNEXTLINE(runtime/int)
     JNI_TRACE("get_X509_CRL_ext_oids(0x%llx, %d)", (long long)x509CrlRef, critical);
-    return get_X509Type_ext_oids<X509_CRL, X509_CRL_get_ext_by_critical, X509_CRL_get_ext>(
-            env, x509CrlRef, critical);
+    return get_X509Type_ext_oids<X509_CRL, decltype(X509_CRL::crl), &X509_CRL::crl,
+            X509_CRL_get_ext_by_critical, X509_CRL_get_ext>(env, x509CrlRef, critical);
 }
 
 static jobjectArray NativeCrypto_get_X509_REVOKED_ext_oids(JNIEnv* env, jclass,
                                                            jlong x509RevokedRef, jint critical) {
     // NOLINTNEXTLINE(runtime/int)
     JNI_TRACE("get_X509_CRL_ext_oids(0x%llx, %d)", (long long)x509RevokedRef, critical);
-    return get_X509Type_ext_oids<X509_REVOKED, X509_REVOKED_get_ext_by_critical,
-                                 X509_REVOKED_get_ext>(env, x509RevokedRef, critical);
+    return get_X509Type_ext_oids<X509_REVOKED, decltype(X509_REVOKED::extensions), nullptr,
+            X509_REVOKED_get_ext_by_critical, X509_REVOKED_get_ext>(env, x509RevokedRef, critical);
 }
 
 /**
@@ -6709,6 +6749,41 @@ static void NativeCrypto_SSL_set_ocsp_response(JNIEnv* env, jclass, jlong ssl_ad
     } else {
         JNI_TRACE("ssl=%p NativeCrypto_SSL_set_ocsp_response => ok", ssl);
     }
+}
+
+// All verify_data values are currently 12 bytes long, but cipher suites are allowed
+// to customize the length of their verify_data (with a default of 12 bytes).  We accept
+// up to 16 bytes so that we can check that the results are actually 12 bytes long in
+// tests and update this value if necessary.
+const size_t MAX_TLS_UNIQUE_LENGTH = 16;
+
+static jbyteArray NativeCrypto_SSL_get_tls_unique(JNIEnv* env, jclass, jlong ssl_address) {
+    SSL* ssl = to_SSL(env, ssl_address, true);
+    JNI_TRACE("ssl=%p NativeCrypto_SSL_get_tls_unique", ssl);
+    if (ssl == nullptr) {
+        return nullptr;
+    }
+
+    uint8_t data[MAX_TLS_UNIQUE_LENGTH];
+    size_t data_len;
+    int ret = SSL_get_tls_unique(ssl, data, &data_len, MAX_TLS_UNIQUE_LENGTH);
+
+    if (!ret || data_len == 0) {
+        JNI_TRACE("NativeCrypto_SSL_get_tls_unique(%p) => null", ssl);
+        return nullptr;
+    }
+
+    ScopedLocalRef<jbyteArray> byteArray(env, env->NewByteArray(static_cast<jsize>(data_len)));
+    if (byteArray.get() == nullptr) {
+        JNI_TRACE("NativeCrypto_SSL_get_tls_unique(%p) => creating byte array failed", ssl);
+        return nullptr;
+    }
+
+    env->SetByteArrayRegion(byteArray.get(), 0, static_cast<jsize>(data_len), (const jbyte*)data);
+    JNI_TRACE("NativeCrypto_SSL_get_tls_unique(%p) => %p [size=%zd]", ssl, byteArray.get(),
+              data_len);
+
+    return byteArray.release();
 }
 
 static void NativeCrypto_SSL_use_psk_identity_hint(JNIEnv* env, jclass, jlong ssl_address,
@@ -9355,6 +9430,7 @@ static JNINativeMethod sNativeCryptoMethods[] = {
         CONSCRYPT_NATIVE_METHOD(RSA_private_decrypt, "(I[B[B" REF_EVP_PKEY "I)I"),
         CONSCRYPT_NATIVE_METHOD(get_RSA_private_params, "(" REF_EVP_PKEY ")[[B"),
         CONSCRYPT_NATIVE_METHOD(get_RSA_public_params, "(" REF_EVP_PKEY ")[[B"),
+        CONSCRYPT_NATIVE_METHOD(chacha20_encrypt_decrypt, "([BI[BII[B[BI)V"),
         CONSCRYPT_NATIVE_METHOD(EC_GROUP_new_by_curve_name, "(Ljava/lang/String;)J"),
         CONSCRYPT_NATIVE_METHOD(EC_GROUP_new_arbitrary, "([B[B[B[B[B[BI)J"),
         CONSCRYPT_NATIVE_METHOD(EC_GROUP_get_curve_name, "(" REF_EC_GROUP ")Ljava/lang/String;"),
@@ -9543,6 +9619,7 @@ static JNINativeMethod sNativeCryptoMethods[] = {
         CONSCRYPT_NATIVE_METHOD(SSL_enable_ocsp_stapling, "(J)V"),
         CONSCRYPT_NATIVE_METHOD(SSL_get_ocsp_response, "(J)[B"),
         CONSCRYPT_NATIVE_METHOD(SSL_set_ocsp_response, "(J[B)V"),
+        CONSCRYPT_NATIVE_METHOD(SSL_get_tls_unique, "(J)[B"),
         CONSCRYPT_NATIVE_METHOD(SSL_use_psk_identity_hint, "(JLjava/lang/String;)V"),
         CONSCRYPT_NATIVE_METHOD(set_SSL_psk_client_callback_enabled, "(JZ)V"),
         CONSCRYPT_NATIVE_METHOD(set_SSL_psk_server_callback_enabled, "(JZ)V"),

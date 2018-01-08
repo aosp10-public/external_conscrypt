@@ -48,6 +48,7 @@ import javax.net.ssl.HandshakeCompletedListener;
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
@@ -544,21 +545,45 @@ public class ConscryptSocketTest {
         assertThat(connection.clientException.getCause(), instanceOf(CertificateException.class));
     }
 
+    @Test
+    @SuppressWarnings("deprecation")
+    public void setAlpnProtocolWithNullShouldSucceed() throws Exception {
+        ServerSocket listening = newServerSocket();
+        OpenSSLSocketImpl clientSocket = null;
+        try {
+            Socket underlying = new Socket(listening.getInetAddress(), listening.getLocalPort());
+            clientSocket = (OpenSSLSocketImpl) socketType.newClientSocket(
+                    new ClientHooks().createContext(), listening, underlying);
+
+            // Both versions should succeed.
+            clientSocket.setAlpnProtocols((byte[]) null);
+            clientSocket.setAlpnProtocols((String[]) null);
+        } finally {
+            if (clientSocket != null) {
+                clientSocket.close();
+            }
+            listening.close();
+        }
+    }
+
     // http://b/27250522
     @Test
     public void test_setSoTimeout_doesNotCreateSocketImpl() throws Exception {
         ServerSocket listening = newServerSocket();
-        Socket underlying = new Socket(listening.getInetAddress(), listening.getLocalPort());
+        try {
+            Socket underlying = new Socket(listening.getInetAddress(), listening.getLocalPort());
+            Socket socket = socketType.newClientSocket(
+                    new ClientHooks().createContext(), listening, underlying);
+            socketType.assertSocketType(socket);
+            socket.setSoTimeout(1000);
+            socket.close();
 
-        Socket socket = socketType.newClientSocket(
-                new ClientHooks().createContext(), listening, underlying);
-        socketType.assertSocketType(socket);
-        socket.setSoTimeout(1000);
-        socket.close();
-
-        Field f = Socket.class.getDeclaredField("created");
-        f.setAccessible(true);
-        assertFalse(f.getBoolean(socket));
+            Field f = Socket.class.getDeclaredField("created");
+            f.setAccessible(true);
+            assertFalse(f.getBoolean(socket));
+        } finally {
+            listening.close();
+        }
     }
 
     @Test
@@ -584,6 +609,19 @@ public class ConscryptSocketTest {
 
         assertFalse(connection.clientHooks.isHandshakeCompleted);
         assertFalse(connection.serverHooks.isHandshakeCompleted);
+    }
+
+    @Test
+    public void savedSessionWorksAfterClose() throws Exception {
+        TestConnection connection = new TestConnection(new X509Certificate[] {cert, ca}, certKey);
+        connection.doHandshake();
+
+        SSLSession session = connection.client.getSession();
+        String cipherSuite = session.getCipherSuite();
+
+        connection.client.close();
+
+        assertEquals(cipherSuite, session.getCipherSuite());
     }
 
     private static ServerSocket newServerSocket() throws IOException {

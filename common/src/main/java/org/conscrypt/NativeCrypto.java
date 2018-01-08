@@ -132,6 +132,14 @@ public final class NativeCrypto {
      */
     static native byte[][] get_RSA_private_params(NativeRef.EVP_PKEY rsa);
 
+    // --- ChaCha20 -----------------------
+
+    /**
+     * Returns the encrypted or decrypted version of the data.
+     */
+    static native void chacha20_encrypt_decrypt(byte[] in, int inOffset, byte[] out, int outOffset,
+            int length, byte[] key, byte[] nonce, int blockCounter);
+
     // --- EC functions --------------------------
 
     static native long EVP_PKEY_new_EC_KEY(
@@ -886,6 +894,8 @@ public final class NativeCrypto {
     static native byte[] SSL_get_ocsp_response(long ssl);
 
     static native void SSL_set_ocsp_response(long ssl, byte[] response);
+
+    static native byte[] SSL_get_tls_unique(long ssl);
 
     static native void SSL_use_psk_identity_hint(long ssl, String identityHint) throws SSLException;
 
