@@ -80,7 +80,7 @@ void init(JavaVM* vm, JNIEnv* env) {
 
 void jniRegisterNativeMethods(JNIEnv* env, const char* className, const JNINativeMethod* gMethods,
                               int numMethods) {
-    ALOGV("Registering %s's %d native methods...", className, numMethods);
+    CONSCRYPT_LOG_VERBOSE("Registering %s's %d native methods...", className, numMethods);
 
     ScopedLocalRef<jclass> c(env, env->FindClass(className));
     if (c.get() == nullptr) {
@@ -126,13 +126,13 @@ int throwException(JNIEnv* env, const char* className, const char* msg) {
     jclass exceptionClass = env->FindClass(className);
 
     if (exceptionClass == nullptr) {
-        ALOGD("Unable to find exception class %s", className);
+        CONSCRYPT_LOG_ERROR("Unable to find exception class %s", className);
         /* ClassNotFoundException now pending */
         return -1;
     }
 
     if (env->ThrowNew(exceptionClass, msg) != JNI_OK) {
-        ALOGD("Failed throwing '%s' '%s'", className, msg);
+        CONSCRYPT_LOG_ERROR("Failed throwing '%s' '%s'", className, msg);
         /* an exception, most likely OOM, will now be pending */
         return -1;
     }
@@ -176,6 +176,12 @@ int throwIllegalBlockSizeException(JNIEnv* env, const char* message) {
     JNI_TRACE("throwIllegalBlockSizeException %s", message);
     return conscrypt::jniutil::throwException(
             env, "javax/crypto/IllegalBlockSizeException", message);
+}
+
+int throwShortBufferException(JNIEnv* env, const char* message) {
+    JNI_TRACE("throwShortBufferException %s", message);
+    return conscrypt::jniutil::throwException(
+            env, "javax/crypto/ShortBufferException", message);
 }
 
 int throwNoSuchAlgorithmException(JNIEnv* env, const char* message) {
@@ -241,6 +247,9 @@ int throwForCipherError(JNIEnv* env, int reason, const char* message,
         case CIPHER_R_BAD_KEY_LENGTH:
         case CIPHER_R_UNSUPPORTED_KEY_SIZE:
             return throwInvalidKeyException(env, message);
+            break;
+        case CIPHER_R_BUFFER_TOO_SMALL:
+            return throwShortBufferException(env, message);
             break;
     }
     return defaultThrow(env, message);
@@ -440,7 +449,7 @@ int throwSSLExceptionWithSslErrors(JNIEnv* env, SSL* ssl, int sslErrorCode, cons
     if (asprintf(&str, "%s: ssl=%p: %s", message, ssl, sslErrorStr) <= 0) {
         // problem with asprintf, just throw argument message, log everything
         int ret = actualThrow(env, message);
-        ALOGV("%s: ssl=%p: %s", message, ssl, sslErrorStr);
+        CONSCRYPT_LOG_VERBOSE("%s: ssl=%p: %s", message, ssl, sslErrorStr);
         ERR_clear_error();
         return ret;
     }
@@ -496,7 +505,7 @@ int throwSSLExceptionWithSslErrors(JNIEnv* env, SSL* ssl, int sslErrorCode, cons
         ret = actualThrow(env, allocStr);
     }
 
-    ALOGV("%s", allocStr);
+    CONSCRYPT_LOG_VERBOSE("%s", allocStr);
     free(allocStr);
     ERR_clear_error();
     return ret;

@@ -22,6 +22,7 @@
 #include <conscrypt/compat.h>
 #include <conscrypt/compatibility_close_monitor.h>
 #include <conscrypt/jniutil.h>
+#include <conscrypt/logging.h>
 #include <conscrypt/macros.h>
 #include <conscrypt/native_crypto.h>
 #include <conscrypt/netutil.h>
@@ -550,7 +551,7 @@ static jbyteArray rawSignDigestWithPrivateKey(JNIEnv* env, jobject privateKey, c
                                                      "rawSignDigestWithPrivateKey",
                                                      "(Ljava/security/PrivateKey;[B)[B");
     if (rawSignMethod == nullptr) {
-        ALOGE("Could not find rawSignDigestWithPrivateKey");
+        CONSCRYPT_LOG_ERROR("Could not find rawSignDigestWithPrivateKey");
         return nullptr;
     }
 
@@ -585,7 +586,7 @@ static jbyteArray rsaDecryptWithPrivateKey(JNIEnv* env, jobject privateKey, jint
             env->GetStaticMethodID(conscrypt::jniutil::cryptoUpcallsClass,
                                    "rsaDecryptWithPrivateKey", "(Ljava/security/PrivateKey;I[B)[B");
     if (rsaDecryptMethod == nullptr) {
-        ALOGE("Could not find rsaDecryptWithPrivateKey");
+        CONSCRYPT_LOG_ERROR("Could not find rsaDecryptWithPrivateKey");
         return nullptr;
     }
 
@@ -775,7 +776,7 @@ int EcdsaMethodSign(const uint8_t* digest, size_t digest_len, uint8_t* sig, unsi
     // Retrieve private key JNI reference.
     jobject private_key = EcKeyGetKey(ec_key);
     if (!private_key) {
-        ALOGE("Null JNI reference passed to EcdsaMethodSign!");
+        CONSCRYPT_LOG_ERROR("Null JNI reference passed to EcdsaMethodSign!");
         return 0;
     }
 
@@ -789,7 +790,7 @@ int EcdsaMethodSign(const uint8_t* digest, size_t digest_len, uint8_t* sig, unsi
             env, rawSignDigestWithPrivateKey(env, private_key,
                                              reinterpret_cast<const char*>(digest), digest_len));
     if (signature.get() == nullptr) {
-        ALOGE("Could not sign message in EcdsaMethodDoSign!");
+        CONSCRYPT_LOG_ERROR("Could not sign message in EcdsaMethodDoSign!");
         return 0;
     }
 
@@ -798,7 +799,7 @@ int EcdsaMethodSign(const uint8_t* digest, size_t digest_len, uint8_t* sig, unsi
     // ECDSA_size().
     size_t max_expected_size = ECDSA_size(ec_key);
     if (signatureBytes.size() > max_expected_size) {
-        ALOGE("ECDSA Signature size mismatch, actual: %zd, expected <= %zd", signatureBytes.size(),
+        CONSCRYPT_LOG_ERROR("ECDSA Signature size mismatch, actual: %zd, expected <= %zd", signatureBytes.size(),
               max_expected_size);
         return 0;
     }
@@ -6052,7 +6053,7 @@ static ssl_verify_result_t cert_verify_callback(SSL* ssl, CONSCRYPT_UNUSED uint8
     AppData* appData = toAppData(ssl);
     JNIEnv* env = appData->env;
     if (env == nullptr) {
-        ALOGE("AppData->env missing in cert_verify_callback");
+        CONSCRYPT_LOG_ERROR("AppData->env missing in cert_verify_callback");
         JNI_TRACE("ssl=%p cert_verify_callback => 0", ssl);
         return ssl_verify_invalid;
     }
@@ -6104,7 +6105,7 @@ static void info_callback(const SSL* ssl, int type, int value) {
     AppData* appData = toAppData(ssl);
     JNIEnv* env = appData->env;
     if (env == nullptr) {
-        ALOGE("AppData->env missing in info_callback");
+        CONSCRYPT_LOG_ERROR("AppData->env missing in info_callback");
         JNI_TRACE("ssl=%p info_callback env error", ssl);
         return;
     }
@@ -6147,7 +6148,7 @@ static int cert_cb(SSL* ssl, CONSCRYPT_UNUSED void* arg) {
     AppData* appData = toAppData(ssl);
     JNIEnv* env = appData->env;
     if (env == nullptr) {
-        ALOGE("AppData->env missing in cert_cb");
+        CONSCRYPT_LOG_ERROR("AppData->env missing in cert_cb");
         JNI_TRACE("ssl=%p cert_cb env error => 0", ssl);
         return 0;
     }
@@ -6209,7 +6210,7 @@ static unsigned int psk_client_callback(SSL* ssl, const char* hint, char* identi
     AppData* appData = toAppData(ssl);
     JNIEnv* env = appData->env;
     if (env == nullptr) {
-        ALOGE("AppData->env missing in psk_client_callback");
+        CONSCRYPT_LOG_ERROR("AppData->env missing in psk_client_callback");
         JNI_TRACE("ssl=%p psk_client_callback env error", ssl);
         return 0;
     }
@@ -6277,7 +6278,7 @@ static unsigned int psk_server_callback(SSL* ssl, const char* identity, unsigned
     AppData* appData = toAppData(ssl);
     JNIEnv* env = appData->env;
     if (env == nullptr) {
-        ALOGE("AppData->env missing in psk_server_callback");
+        CONSCRYPT_LOG_ERROR("AppData->env missing in psk_server_callback");
         JNI_TRACE("ssl=%p psk_server_callback env error", ssl);
         return 0;
     }
@@ -6331,7 +6332,7 @@ static int new_session_callback(SSL* ssl, SSL_SESSION* session) {
     AppData* appData = toAppData(ssl);
     JNIEnv* env = appData->env;
     if (env == nullptr) {
-        ALOGE("AppData->env missing in new_session_callback");
+        CONSCRYPT_LOG_ERROR("AppData->env missing in new_session_callback");
         JNI_TRACE("ssl=%p new_session_callback env error", ssl);
         return 0;
     }
@@ -6367,7 +6368,7 @@ static SSL_SESSION* server_session_requested_callback(SSL* ssl, const uint8_t* i
     AppData* appData = toAppData(ssl);
     JNIEnv* env = appData->env;
     if (env == nullptr) {
-        ALOGE("AppData->env missing in server_session_requested_callback");
+        CONSCRYPT_LOG_ERROR("AppData->env missing in server_session_requested_callback");
         JNI_TRACE("ssl=%p server_session_requested_callback env error", ssl);
         return 0;
     }
@@ -6417,13 +6418,13 @@ static void debug_print_packet_data(const SSL* ssl, char direction, const char* 
 
     struct timeval tv;
     if (gettimeofday(&tv, NULL)) {
-        ALOG(LOG_INFO, LOG_TAG "-jni", "debug_print_packet_data: could not get time of day");
+        CONSCRYPT_LOG(LOG_INFO, LOG_TAG "-jni", "debug_print_packet_data: could not get time of day");
         return;
     }
 
     // Packet preamble for text2pcap
-    ALOG(LOG_INFO, LOG_TAG "-jni", "ssl=%p SSL_DATA: %c %ld.%06ld", ssl, direction, tv.tv_sec,
-         tv.tv_usec);
+    CONSCRYPT_LOG(LOG_INFO, LOG_TAG "-jni", "ssl=%p SSL_DATA: %c %ld.%06ld", ssl, direction, tv.tv_sec,
+         static_cast<long>(tv.tv_usec));
 
     char out[kDataWidth * 3 + 1];
     for (size_t i = 0; i < len; i += kDataWidth) {
@@ -6432,17 +6433,17 @@ static void debug_print_packet_data(const SSL* ssl, char direction, const char* 
         for (size_t j = 0, offset = 0; j < n; j++, offset += 3) {
             int ret = snprintf(out + offset, sizeof(out) - offset, "%02x ", data[i + j] & 0xFF);
             if (ret < 0 || static_cast<size_t>(ret) >= sizeof(out) - offset) {
-                ALOG(LOG_INFO, LOG_TAG "-jni", "debug_print_packet_data failed to output %d", ret);
+                CONSCRYPT_LOG(LOG_INFO, LOG_TAG "-jni", "debug_print_packet_data failed to output %d", ret);
                 return;
             }
         }
 
         // Print out packet data in format understood by text2pcap
-        ALOG(LOG_INFO, LOG_TAG "-jni", "ssl=%p SSL_DATA: %06zx %s", ssl, i, out);
+        CONSCRYPT_LOG(LOG_INFO, LOG_TAG "-jni", "ssl=%p SSL_DATA: %06zx %s", ssl, i, out);
     }
 
     // Conclude the packet data
-    ALOG(LOG_INFO, LOG_TAG "-jni", "ssl=%p SSL_DATA: %06zx", ssl, len);
+    CONSCRYPT_LOG(LOG_INFO, LOG_TAG "-jni", "ssl=%p SSL_DATA: %06zx", ssl, len);
 }
 
 /*
@@ -6474,14 +6475,14 @@ static jlong NativeCrypto_SSL_CTX_new(JNIEnv* env, jclass) {
     SSL_CTX_set_options(
             sslCtx.get(),
             SSL_OP_ALL
-                    // Note: We explicitly do not allow SSLv2 to be used.
-                    | SSL_OP_NO_SSLv2
                     // We also disable session tickets for better compatibility b/2682876
                     | SSL_OP_NO_TICKET
                     // We also disable compression for better compatibility b/2710492 b/2710497
                     | SSL_OP_NO_COMPRESSION
                     // Generate a fresh ECDH keypair for each key exchange.
                     | SSL_OP_SINGLE_ECDH_USE);
+    SSL_CTX_set_min_proto_version(sslCtx.get(), TLS1_VERSION);
+    SSL_CTX_set_max_proto_version(sslCtx.get(), TLS1_2_VERSION);
 
     uint32_t mode = SSL_CTX_get_mode(sslCtx.get());
     /*
@@ -6643,7 +6644,7 @@ static void NativeCrypto_SSL_enable_tls_channel_id(JNIEnv* env, jclass, jlong ss
     // NOLINTNEXTLINE(runtime/int)
     long ret = SSL_enable_tls_channel_id(ssl);
     if (ret != 1L) {
-        ALOGE("%s", ERR_error_string(ERR_peek_error(), nullptr));
+        CONSCRYPT_LOG_ERROR("%s", ERR_error_string(ERR_peek_error(), nullptr));
         conscrypt::jniutil::throwSSLExceptionWithSslErrors(env, ssl, SSL_ERROR_NONE,
                                                            "Error enabling Channel ID");
         JNI_TRACE("ssl=%p NativeCrypto_SSL_enable_tls_channel_id => error", ssl);
@@ -6678,7 +6679,7 @@ static jbyteArray NativeCrypto_SSL_get_tls_channel_id(JNIEnv* env, jclass, jlong
         JNI_TRACE("NativeCrypto_SSL_get_tls_channel_id(%p) => not available", ssl);
         return nullptr;
     } else if (ret != 64) {
-        ALOGE("%s", ERR_error_string(ERR_peek_error(), nullptr));
+        CONSCRYPT_LOG_ERROR("%s", ERR_error_string(ERR_peek_error(), nullptr));
         conscrypt::jniutil::throwSSLExceptionWithSslErrors(env, ssl, SSL_ERROR_NONE,
                                                            "Error getting Channel ID");
         JNI_TRACE("ssl=%p NativeCrypto_SSL_get_tls_channel_id => error, returned %zd", ssl, ret);
@@ -6708,7 +6709,7 @@ static void NativeCrypto_SSL_set1_tls_channel_id(JNIEnv* env, jclass, jlong ssl_
     long ret = SSL_set1_tls_channel_id(ssl, pkey);
 
     if (ret != 1L) {
-        ALOGE("%s", ERR_error_string(ERR_peek_error(), nullptr));
+        CONSCRYPT_LOG_ERROR("%s", ERR_error_string(ERR_peek_error(), nullptr));
         conscrypt::jniutil::throwSSLExceptionWithSslErrors(
                 env, ssl, SSL_ERROR_NONE, "Error setting private key for Channel ID");
         JNI_TRACE("ssl=%p SSL_set1_tls_channel_id => error", ssl);
@@ -6873,6 +6874,26 @@ static jlong NativeCrypto_SSL_clear_options(JNIEnv* env, jclass, jlong ssl_addre
     jlong result = static_cast<jlong>(SSL_clear_options(ssl, static_cast<uint32_t>(options)));
     // NOLINTNEXTLINE(runtime/int)
     JNI_TRACE("ssl=%p NativeCrypto_SSL_clear_options => 0x%lx", ssl, (long)result);
+    return result;
+}
+
+static jint NativeCrypto_SSL_set_protocol_versions(JNIEnv* env, jclass, jlong ssl_address, CONSCRYPT_UNUSED jobject ssl_holder, jint min_version, jint max_version) {
+    CHECK_ERROR_QUEUE_ON_RETURN;
+    SSL* ssl = to_SSL(env, ssl_address, true);
+    JNI_TRACE("ssl=%p NativeCrypto_SSL_set_protocol_versions min=0x%x max=0x%x", ssl, min_version, max_version);
+    if (ssl == nullptr) {
+        return 0;
+    }
+    int min_result = SSL_set_min_proto_version(ssl, static_cast<uint16_t>(min_version));
+    int max_result = SSL_set_max_proto_version(ssl, static_cast<uint16_t>(max_version));
+    // Return failure if either call failed.
+    int result = 1;
+    if (!min_result || !max_result) {
+        result = 0;
+        // The only possible error is an invalid version, so we don't need the details.
+        ERR_clear_error();
+    }
+    JNI_TRACE("ssl=%p NativeCrypto_SSL_set_protocol_versions => (min: %d, max: %d) == %d", ssl, min_result, max_result, result);
     return result;
 }
 
@@ -7051,6 +7072,100 @@ static jbyteArray NativeCrypto_SSL_get_tls_unique(JNIEnv* env, jclass, jlong ssl
               data_len);
 
     return byteArray.release();
+}
+
+static void NativeCrypto_SSL_set_token_binding_params(JNIEnv* env, jclass, jlong ssl_address,
+        CONSCRYPT_UNUSED jobject ssl_holder, jintArray params) {
+    CHECK_ERROR_QUEUE_ON_RETURN;
+    SSL* ssl = to_SSL(env, ssl_address, true);
+    JNI_TRACE("ssl=%p NativeCrypto_SSL_set_token_binding_params", ssl);
+    if (ssl == nullptr) {
+        return;
+    }
+    ScopedIntArrayRO paramsValues(env, params);
+    int ret;
+    if (paramsValues.get() == nullptr) {
+        JNI_TRACE("ssl=%p NativeCrypto_SSL_set_token_binding_params params==null", ssl);
+        ret = SSL_set_token_binding_params(ssl, nullptr, 0);
+    } else {
+        std::unique_ptr<uint8_t[]> paramsBytes(new uint8_t[paramsValues.size()]);
+        for (size_t i = 0; i < paramsValues.size(); i++) {
+            paramsBytes.get()[i] = static_cast<uint8_t>(paramsValues[i]);
+        }
+        ret = SSL_set_token_binding_params(ssl, paramsBytes.get(), paramsValues.size());
+    }
+
+    JNI_TRACE("ssl=%p NativeCrypto_SSL_set_token_binding_params => %d", ssl, ret);
+
+    if (!ret) {
+        conscrypt::jniutil::throwSSLExceptionStr(env, "Could not set token binding parameters");
+        ERR_clear_error();
+    }
+}
+
+static int NativeCrypto_SSL_get_token_binding_params(JNIEnv* env, jclass, jlong ssl_address,
+        CONSCRYPT_UNUSED jobject ssl_holder) {
+    CHECK_ERROR_QUEUE_ON_RETURN;
+    SSL* ssl = to_SSL(env, ssl_address, true);
+    JNI_TRACE("ssl=%p NativeCrypto_SSL_get_token_binding_params", ssl);
+    if (ssl == nullptr) {
+        return 0;
+    }
+    int ret;
+    if (!SSL_is_token_binding_negotiated(ssl)) {
+        ret = -1;
+    } else {
+        ret = SSL_get_negotiated_token_binding_param(ssl);
+    }
+    JNI_TRACE("ssl=%p NativeCrypto_SSL_set_token_binding_params => %d", ssl, ret);
+    return ret;
+}
+
+static jbyteArray NativeCrypto_SSL_export_keying_material(JNIEnv* env, jclass, jlong ssl_address,
+        CONSCRYPT_UNUSED jobject ssl_holder, jbyteArray label, jbyteArray context, jint num_bytes) {
+    CHECK_ERROR_QUEUE_ON_RETURN;
+    SSL* ssl = to_SSL(env, ssl_address, true);
+    JNI_TRACE("ssl=%p NativeCrypto_SSL_export_keying_material", ssl);
+    if (ssl == nullptr) {
+        return nullptr;
+    }
+    ScopedByteArrayRO labelBytes(env, label);
+    if (labelBytes.get() == nullptr) {
+        JNI_TRACE("ssl=%p NativeCrypto_SSL_export_keying_material label == null => exception", ssl);
+        return nullptr;
+    }
+    std::unique_ptr<uint8_t[]> out(new uint8_t[num_bytes]);
+    int ret;
+    if (context == nullptr) {
+        ret = SSL_export_keying_material(ssl, out.get(), num_bytes,
+                        reinterpret_cast<const char*>(labelBytes.get()), labelBytes.size(),
+                        nullptr, 0, 0);
+    } else {
+        ScopedByteArrayRO contextBytes(env, context);
+        if (contextBytes.get() == nullptr) {
+            JNI_TRACE("ssl=%p NativeCrypto_SSL_export_keying_material context == null => exception", ssl);
+            return nullptr;
+        }
+        ret = SSL_export_keying_material(ssl, out.get(), num_bytes,
+                        reinterpret_cast<const char*>(labelBytes.get()), labelBytes.size(),
+                        reinterpret_cast<const uint8_t*>(contextBytes.get()), contextBytes.size(), 1);
+    }
+    if (!ret) {
+        conscrypt::jniutil::throwExceptionFromBoringSSLError(env, "SSL_export_keying_material",
+                conscrypt::jniutil::throwSSLExceptionStr);
+        JNI_TRACE("ssl=%p NativeCrypto_SSL_export_keying_material => exception", ssl);
+        return nullptr;
+    }
+    jbyteArray result = env->NewByteArray(static_cast<jsize>(num_bytes));
+    if (result == nullptr) {
+        conscrypt::jniutil::throwSSLExceptionStr(env, "Could not create result array");
+        JNI_TRACE("ssl=%p NativeCrypto_SSL_export_keying_material => could not create array", ssl);
+        return nullptr;
+    }
+    const jbyte* src = reinterpret_cast<jbyte*>(out.get());
+    env->SetByteArrayRegion(result, 0, static_cast<jsize>(num_bytes), src);
+    JNI_TRACE("ssl=%p NativeCrypto_SSL_export_keying_material => success", ssl);
+    return result;
 }
 
 static void NativeCrypto_SSL_use_psk_identity_hint(JNIEnv* env, jclass, jlong ssl_address, CONSCRYPT_UNUSED jobject ssl_holder,
@@ -7455,7 +7570,7 @@ static int alpn_select_callback(SSL* ssl, const unsigned char** out, unsigned ch
     }
     JNIEnv* env = appData->env;
     if (env == nullptr) {
-        ALOGE("AppData->env missing in alpn_select_callback");
+        CONSCRYPT_LOG_ERROR("AppData->env missing in alpn_select_callback");
         JNI_TRACE("ssl=%p alpn_select_callback => 0", ssl);
         return SSL_TLSEXT_ERR_NOACK;
     }
@@ -7695,7 +7810,7 @@ static void NativeCrypto_SSL_do_handshake(JNIEnv* env, jclass, jlong ssl_address
                 return;
             }
         } else {
-            // ALOGE("Unknown error %d during handshake", error);
+            // CONSCRYPT_LOG_ERROR("Unknown error %d during handshake", error);
             break;
         }
     }
@@ -7773,7 +7888,7 @@ static jobjectArray NativeCrypto_SSL_get0_peer_certificates(JNIEnv* env, jclass,
         return nullptr;
     }
 
-    STACK_OF(CRYPTO_BUFFER)* chain = SSL_get0_peer_certificates(ssl);
+    const STACK_OF(CRYPTO_BUFFER)* chain = SSL_get0_peer_certificates(ssl);
     if (chain == nullptr) {
         return nullptr;
     }
@@ -8611,7 +8726,7 @@ static jstring NativeCrypto_SSL_SESSION_cipher(JNIEnv* env, jclass, jlong ssl_se
     if (ssl_session == nullptr) {
         return nullptr;
     }
-    const SSL_CIPHER* cipher = ssl_session->cipher;
+    const SSL_CIPHER* cipher = SSL_SESSION_get0_cipher(ssl_session);
     const char* name = SSL_CIPHER_standard_name(cipher);
     JNI_TRACE("ssl_session=%p NativeCrypto_SSL_SESSION_cipher => %s", ssl_session, name);
     return env->NewStringUTF(name);
@@ -9544,6 +9659,85 @@ static int NativeCrypto_ENGINE_SSL_read_BIO_heap(JNIEnv* env, jclass, jlong ssl_
     return result;
 }
 
+static void NativeCrypto_ENGINE_SSL_force_read(JNIEnv* env, jclass, jlong ssl_address, CONSCRYPT_UNUSED jobject ssl_holder,
+                                               jobject shc) {
+    CHECK_ERROR_QUEUE_ON_RETURN;
+    SSL* ssl = to_SSL(env, ssl_address, true);
+    if (ssl == nullptr) {
+        return;
+    }
+    JNI_TRACE("ssl=%p NativeCrypto_ENGINE_SSL_force_read shc=%p", ssl, shc);
+    if (shc == nullptr) {
+        conscrypt::jniutil::throwNullPointerException(env, "sslHandshakeCallbacks == null");
+        JNI_TRACE("ssl=%p NativeCrypto_ENGINE_SSL_force_read => sslHandshakeCallbacks == null",
+                  ssl);
+        return;
+    }
+    AppData* appData = toAppData(ssl);
+    if (appData == nullptr) {
+        conscrypt::jniutil::throwSSLExceptionStr(env, "Unable to retrieve application data");
+        JNI_TRACE("ssl=%p NativeCrypto_ENGINE_SSL_force_read => appData == null", ssl);
+        return;
+    }
+    if (!appData->setCallbackState(env, shc, nullptr)) {
+        conscrypt::jniutil::throwSSLExceptionStr(env, "Unable to set appdata callback");
+        ERR_clear_error();
+        JNI_TRACE("ssl=%p NativeCrypto_ENGINE_SSL_force_read => exception", ssl);
+        return;
+    }
+    char c;
+    int result = SSL_peek(ssl, &c, 1);
+    appData->clearCallbackState();
+    if (env->ExceptionCheck()) {
+        // An exception was thrown by one of the callbacks. Just propagate that exception.
+        ERR_clear_error();
+        JNI_TRACE("ssl=%p NativeCrypto_ENGINE_SSL_force_read => THROWN_EXCEPTION", ssl);
+        return;
+    }
+
+    SslError sslError(ssl, result);
+    switch (sslError.get()) {
+        case SSL_ERROR_NONE:
+        case SSL_ERROR_ZERO_RETURN:
+        case SSL_ERROR_WANT_READ:
+        case SSL_ERROR_WANT_WRITE: {
+            // The call succeeded, lacked data, or the SSL is closed.  All is well.
+            break;
+        }
+        case SSL_ERROR_SYSCALL: {
+            // A problem occurred during a system call, but this is not
+            // necessarily an error.
+            if (result == 0) {
+                // TODO(nmittler): Can this happen with memory BIOs?
+                // Connection closed without proper shutdown. Tell caller we
+                // have reached end-of-stream.
+                conscrypt::jniutil::throwException(env, "java/io/EOFException", "Read error");
+                break;
+            }
+
+            if (errno == EINTR) {
+                // TODO(nmittler): Can this happen with memory BIOs?
+                // System call has been interrupted. Simply retry.
+                conscrypt::jniutil::throwException(env, "java/io/InterruptedIOException",
+                                                      "Read error");
+                break;
+            }
+
+            // Note that for all other system call errors we fall through
+            // to the default case, which results in an Exception.
+            FALLTHROUGH_INTENDED;
+        }
+        default: {
+            // Everything else is basically an error.
+            conscrypt::jniutil::throwSSLExceptionWithSslErrors(env, ssl, sslError.release(),
+                                                               "Read error");
+            break;
+        }
+    }
+
+    JNI_TRACE("ssl=%p NativeCrypto_ENGINE_SSL_force_read shc=%p", ssl, shc);
+}
+
 /**
  * OpenSSL write function (2): write into buffer at offset n chunks.
  */
@@ -9954,6 +10148,7 @@ static JNINativeMethod sNativeCryptoMethods[] = {
         CONSCRYPT_NATIVE_METHOD(SSL_set_mode, "(J" REF_SSL "J)J"),
         CONSCRYPT_NATIVE_METHOD(SSL_set_options, "(J" REF_SSL "J)J"),
         CONSCRYPT_NATIVE_METHOD(SSL_clear_options, "(J" REF_SSL "J)J"),
+        CONSCRYPT_NATIVE_METHOD(SSL_set_protocol_versions, "(J" REF_SSL "II)I"),
         CONSCRYPT_NATIVE_METHOD(SSL_enable_signed_cert_timestamps, "(J" REF_SSL ")V"),
         CONSCRYPT_NATIVE_METHOD(SSL_get_signed_cert_timestamp_list, "(J" REF_SSL ")[B"),
         CONSCRYPT_NATIVE_METHOD(SSL_set_signed_cert_timestamp_list, "(J" REF_SSL "[B)V"),
@@ -9961,6 +10156,9 @@ static JNINativeMethod sNativeCryptoMethods[] = {
         CONSCRYPT_NATIVE_METHOD(SSL_get_ocsp_response, "(J" REF_SSL ")[B"),
         CONSCRYPT_NATIVE_METHOD(SSL_set_ocsp_response, "(J" REF_SSL "[B)V"),
         CONSCRYPT_NATIVE_METHOD(SSL_get_tls_unique, "(J" REF_SSL ")[B"),
+        CONSCRYPT_NATIVE_METHOD(SSL_set_token_binding_params, "(J" REF_SSL "[I)V"),
+        CONSCRYPT_NATIVE_METHOD(SSL_get_token_binding_params, "(J" REF_SSL ")I"),
+        CONSCRYPT_NATIVE_METHOD(SSL_export_keying_material, "(J" REF_SSL "[B[BI)[B"),
         CONSCRYPT_NATIVE_METHOD(SSL_use_psk_identity_hint, "(J" REF_SSL "Ljava/lang/String;)V"),
         CONSCRYPT_NATIVE_METHOD(set_SSL_psk_client_callback_enabled, "(J" REF_SSL "Z)V"),
         CONSCRYPT_NATIVE_METHOD(set_SSL_psk_server_callback_enabled, "(J" REF_SSL "Z)V"),
@@ -10019,6 +10217,7 @@ static JNINativeMethod sNativeCryptoMethods[] = {
         CONSCRYPT_NATIVE_METHOD(ENGINE_SSL_read_BIO_direct, "(J" REF_SSL "JJI" SSL_CALLBACKS ")I"),
         CONSCRYPT_NATIVE_METHOD(ENGINE_SSL_write_BIO_heap, "(J" REF_SSL "J[BII" SSL_CALLBACKS ")I"),
         CONSCRYPT_NATIVE_METHOD(ENGINE_SSL_read_BIO_heap, "(J" REF_SSL "J[BII" SSL_CALLBACKS ")I"),
+        CONSCRYPT_NATIVE_METHOD(ENGINE_SSL_force_read, "(J" REF_SSL SSL_CALLBACKS ")V"),
         CONSCRYPT_NATIVE_METHOD(ENGINE_SSL_shutdown, "(J" REF_SSL SSL_CALLBACKS ")V"),
 
         // Used for testing only.

@@ -29,6 +29,7 @@ import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.SocketException;
+import java.nio.charset.Charset;
 import java.security.InvalidKeyException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -126,6 +127,22 @@ final class NativeSsl {
 
     byte[] getTlsUnique() {
         return NativeCrypto.SSL_get_tls_unique(ssl, this);
+    }
+
+    void setTokenBindingParams(int... params) throws SSLException {
+        NativeCrypto.SSL_set_token_binding_params(ssl, this, params);
+    }
+
+    int getTokenBindingParams() {
+        return NativeCrypto.SSL_get_token_binding_params(ssl, this);
+    }
+
+    byte[] exportKeyingMaterial(String label, byte[] context, int length) throws SSLException {
+        if (label == null) {
+            throw new NullPointerException("Label is null");
+        }
+        byte[] labelBytes = label.getBytes(Charset.forName("US-ASCII"));
+        return NativeCrypto.SSL_export_keying_material(ssl, this, labelBytes, context, length);
     }
 
     byte[] getPeerTlsSctData() {
@@ -483,7 +500,7 @@ final class NativeSsl {
                 if (issuers != null && issuers.length != 0) {
                     byte[][] issuersBytes;
                     try {
-                        issuersBytes = SSLUtils.encodeIssuerX509Principals(issuers);
+                        issuersBytes = SSLUtils.encodeSubjectX509Principals(issuers);
                     } catch (CertificateEncodingException e) {
                         throw new SSLException("Problem encoding principals", e);
                     }
@@ -530,6 +547,15 @@ final class NativeSsl {
         try {
             return NativeCrypto.ENGINE_SSL_write_direct(
                     ssl, this, sourceAddress, sourceLength, handshakeCallbacks);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    void forceRead() throws IOException {
+        lock.readLock().lock();
+        try {
+            NativeCrypto.ENGINE_SSL_force_read(ssl, this, handshakeCallbacks);
         } finally {
             lock.readLock().unlock();
         }
@@ -585,14 +611,18 @@ final class NativeSsl {
      * A utility wrapper that abstracts operations on the underlying native BIO instance.
      */
     final class BioWrapper {
-        private long bio;
+        private volatile long bio;
 
         private BioWrapper() throws SSLException {
             this.bio = NativeCrypto.SSL_BIO_new(ssl, NativeSsl.this);
         }
 
         int getPendingWrittenBytes() {
-            return NativeCrypto.SSL_pending_written_bytes_in_BIO(bio);
+            if (bio != 0) {
+                return NativeCrypto.SSL_pending_written_bytes_in_BIO(bio);
+            } else {
+                return 0;
+            }
         }
 
         int writeDirectByteBuffer(long address, int length) throws IOException {
@@ -606,8 +636,9 @@ final class NativeSsl {
         }
 
         void close() {
-            NativeCrypto.BIO_free_all(bio);
+            long toFree = bio;
             bio = 0L;
+            NativeCrypto.BIO_free_all(toFree);
         }
     }
 }

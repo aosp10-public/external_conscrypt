@@ -109,10 +109,11 @@ final class ConscryptEngine extends AbstractConscryptEngine implements NativeCry
             new SSLEngineResult(CLOSED, NEED_WRAP, 0, 0);
     private static final SSLEngineResult CLOSED_NOT_HANDSHAKING =
             new SSLEngineResult(CLOSED, NOT_HANDSHAKING, 0, 0);
-    private static final ByteBuffer EMPTY = ByteBuffer.allocateDirect(0);
+
+    private static BufferAllocator defaultBufferAllocator = null;
 
     private final SSLParametersImpl sslParameters;
-    private BufferAllocator bufferAllocator;
+    private BufferAllocator bufferAllocator = defaultBufferAllocator;
 
     /**
      * A lazy-created direct buffer used as a bridge between heap buffers provided by the
@@ -208,6 +209,14 @@ final class ConscryptEngine extends AbstractConscryptEngine implements NativeCry
         } catch (SSLException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Configures the default {@link BufferAllocator} to be used by all future
+     * {@link SSLEngine} instances from this provider.
+     */
+    static void setDefaultBufferAllocator(BufferAllocator bufferAllocator) {
+        defaultBufferAllocator = bufferAllocator;
     }
 
     @Override
@@ -351,7 +360,8 @@ final class ConscryptEngine extends AbstractConscryptEngine implements NativeCry
 
     /**
      * This method enables Server Name Indication (SNI) and overrides the {@link PeerInfoProvider}
-     * supplied during engine creation.
+     * supplied during engine creation.  If the hostname is not a valid SNI hostname, the SNI
+     * extension will be omitted from the handshake.
      */
     @Override
     void setHostname(String hostname) {
@@ -874,7 +884,7 @@ final class ConscryptEngine extends AbstractConscryptEngine implements NativeCry
                     // If the capacity of all destination buffers is 0 we need to trigger a SSL_read
                     // anyway to ensure everything is flushed in the BIO pair and so we can detect
                     // it in the pendingInboundCleartextBytes() call.
-                    readPlaintextData(EMPTY);
+                    ssl.forceRead();
                 }
             } catch (SSLException e) {
                 if (pendingOutboundEncryptedBytes() > 0) {
@@ -1742,6 +1752,32 @@ final class ConscryptEngine extends AbstractConscryptEngine implements NativeCry
     @Override
     byte[] getTlsUnique() {
         return ssl.getTlsUnique();
+    }
+
+    @Override
+    void setTokenBindingParams(int... params) throws SSLException {
+        synchronized (ssl) {
+            if (isHandshakeStarted()) {
+                throw new IllegalStateException(
+                        "Cannot set token binding params after handshake has started.");
+            }
+        }
+        ssl.setTokenBindingParams(params);
+    };
+
+    @Override
+    int getTokenBindingParams() {
+        return ssl.getTokenBindingParams();
+    }
+
+    @Override
+    byte[] exportKeyingMaterial(String label, byte[] context, int length) throws SSLException {
+        synchronized (ssl) {
+            if (state < STATE_HANDSHAKE_COMPLETED || state == STATE_CLOSED) {
+                return null;
+            }
+        }
+        return ssl.exportKeyingMaterial(label, context, length);
     }
 
     void setApplicationProtocolSelector(ApplicationProtocolSelectorAdapter adapter) {

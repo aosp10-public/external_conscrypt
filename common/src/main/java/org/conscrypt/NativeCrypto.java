@@ -31,12 +31,14 @@ import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateParsingException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import javax.crypto.BadPaddingException;
 import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.ShortBufferException;
 import javax.net.ssl.SSLException;
 import javax.security.auth.x500.X500Principal;
 import org.conscrypt.OpenSSLX509CertificateFactory.ParsingException;
@@ -327,11 +329,11 @@ public final class NativeCrypto {
 
     static native int EVP_AEAD_CTX_seal(long evpAead, byte[] key, int tagLengthInBytes, byte[] out,
             int outOffset, byte[] nonce, byte[] in, int inOffset, int inLength, byte[] ad)
-            throws BadPaddingException, IndexOutOfBoundsException;
+            throws ShortBufferException, BadPaddingException, IndexOutOfBoundsException;
 
     static native int EVP_AEAD_CTX_open(long evpAead, byte[] key, int tagLengthInBytes, byte[] out,
             int outOffset, byte[] nonce, byte[] in, int inOffset, int inLength, byte[] ad)
-            throws BadPaddingException, IndexOutOfBoundsException;
+            throws ShortBufferException, BadPaddingException, IndexOutOfBoundsException;
 
     // --- HMAC functions ------------------------------------------------------
 
@@ -890,6 +892,8 @@ public final class NativeCrypto {
 
     static native long SSL_clear_options(long ssl, NativeSsl ssl_holder, long options);
 
+    static native int SSL_set_protocol_versions(long ssl, NativeSsl ssl_holder, int min_version, int max_version);
+
     static native void SSL_enable_signed_cert_timestamps(long ssl, NativeSsl ssl_holder);
 
     static native byte[] SSL_get_signed_cert_timestamp_list(long ssl, NativeSsl ssl_holder);
@@ -903,6 +907,12 @@ public final class NativeCrypto {
     static native void SSL_set_ocsp_response(long ssl, NativeSsl ssl_holder, byte[] response);
 
     static native byte[] SSL_get_tls_unique(long ssl, NativeSsl ssl_holder);
+
+    static native void SSL_set_token_binding_params(long ssl, NativeSsl ssl_holder, int[] params) throws SSLException;
+
+    static native int SSL_get_token_binding_params(long ssl, NativeSsl ssl_holder);
+
+    static native byte[] SSL_export_keying_material(long ssl, NativeSsl ssl_holder, byte[] label, byte[] context, int num_bytes) throws SSLException;
 
     static native void SSL_use_psk_identity_hint(long ssl, NativeSsl ssl_holder, String identityHint) throws SSLException;
 
@@ -918,55 +928,55 @@ public final class NativeCrypto {
     };
 
     /** Protocols to enable by default when "TLSv1.1" is requested. */
-    static final String[] TLSV11_PROTOCOLS = new String[] {
-            SUPPORTED_PROTOCOL_TLSV1,
-            SUPPORTED_PROTOCOL_TLSV1_1,
-            SUPPORTED_PROTOCOL_TLSV1_2,
-    };
+    static final String[] TLSV11_PROTOCOLS = TLSV12_PROTOCOLS;
 
     /** Protocols to enable by default when "TLSv1" is requested. */
-    static final String[] TLSV1_PROTOCOLS = new String[] {
-            SUPPORTED_PROTOCOL_TLSV1,
-            SUPPORTED_PROTOCOL_TLSV1_1,
-            SUPPORTED_PROTOCOL_TLSV1_2,
-    };
+    static final String[] TLSV1_PROTOCOLS = TLSV11_PROTOCOLS;
 
     static final String[] DEFAULT_PROTOCOLS = TLSV12_PROTOCOLS;
+    private static final String[] SUPPORTED_PROTOCOLS = DEFAULT_PROTOCOLS;
 
     static String[] getSupportedProtocols() {
-        return TLSV12_PROTOCOLS.clone();
+        return SUPPORTED_PROTOCOLS.clone();
     }
 
     static void setEnabledProtocols(long ssl, NativeSsl ssl_holder, String[] protocols) {
         checkEnabledProtocols(protocols);
-        // openssl uses negative logic letting you disable protocols.
-        // so first, assume we need to set all (disable all) and clear none (enable none).
-        // in the loop, selectively move bits from set to clear (from disable to enable)
-        long optionsToSet = (NativeConstants.SSL_OP_NO_SSLv3 | NativeConstants.SSL_OP_NO_TLSv1
-                | NativeConstants.SSL_OP_NO_TLSv1_1 | NativeConstants.SSL_OP_NO_TLSv1_2);
-        long optionsToClear = 0;
-        for (String protocol : protocols) {
-            if (protocol.equals(SUPPORTED_PROTOCOL_TLSV1)) {
-                optionsToSet &= ~NativeConstants.SSL_OP_NO_TLSv1;
-                optionsToClear |= NativeConstants.SSL_OP_NO_TLSv1;
-            } else if (protocol.equals(SUPPORTED_PROTOCOL_TLSV1_1)) {
-                optionsToSet &= ~NativeConstants.SSL_OP_NO_TLSv1_1;
-                optionsToClear |= NativeConstants.SSL_OP_NO_TLSv1_1;
-            } else if (protocol.equals(SUPPORTED_PROTOCOL_TLSV1_2)) {
-                optionsToSet &= ~NativeConstants.SSL_OP_NO_TLSv1_2;
-                optionsToClear |= NativeConstants.SSL_OP_NO_TLSv1_2;
-            } else if (protocol.equals(OBSOLETE_PROTOCOL_SSLV3)) {
-                // Do nothing since we no longer support this protocol, but
-                // allow it in the list of protocols so we can give an error
-                // message about it if the handshake fails.
-            } else {
-                // error checked by checkEnabledProtocols
-                throw new IllegalStateException();
+        // TLS protocol negotiation only allows a min and max version
+        // to be set, despite the Java API allowing a sparse set of
+        // protocols to be enabled.  Use the lowest contiguous range
+        // of protocols provided by the caller, which is what we've
+        // done historically.
+        List<String> protocolsList = Arrays.asList(protocols);
+        String min = null;
+        String max = null;
+        for (int i = 0; i < SUPPORTED_PROTOCOLS.length; i++) {
+            String protocol = SUPPORTED_PROTOCOLS[i];
+            if (protocolsList.contains(protocol)) {
+                if (min == null) {
+                    min = protocol;
+                }
+                max = protocol;
+            } else if (min != null) {
+                break;
             }
         }
+        if ((min == null) || (max == null)) {
+            throw new IllegalArgumentException("No protocols enabled.");
+        }
+        SSL_set_protocol_versions(ssl, ssl_holder, getProtocolConstant(min), getProtocolConstant(max));
+    }
 
-        SSL_set_options(ssl, ssl_holder, optionsToSet);
-        SSL_clear_options(ssl, ssl_holder, optionsToClear);
+    private static int getProtocolConstant(String protocol) {
+        if (protocol.equals(SUPPORTED_PROTOCOL_TLSV1)) {
+            return NativeConstants.TLS1_VERSION;
+        } else if (protocol.equals(SUPPORTED_PROTOCOL_TLSV1_1)) {
+            return NativeConstants.TLS1_1_VERSION;
+        } else if (protocol.equals(SUPPORTED_PROTOCOL_TLSV1_2)) {
+            return NativeConstants.TLS1_2_VERSION;
+        } else {
+            throw new AssertionError("Unknown protocol encountered: " + protocol);
+        }
     }
 
     static String[] checkEnabledProtocols(String[] protocols) {
@@ -1326,6 +1336,12 @@ public final class NativeCrypto {
     static native int ENGINE_SSL_read_BIO_heap(long ssl, NativeSsl ssl_holder, long bioRef, byte[] destJava,
             int destOffset, int destLength, SSLHandshakeCallbacks shc)
             throws IOException, IndexOutOfBoundsException;
+
+    /**
+     * Forces the SSL object to process any data pending in the BIO.
+     */
+    static native void ENGINE_SSL_force_read(long ssl, NativeSsl ssl_holder,
+            SSLHandshakeCallbacks shc) throws IOException;
 
     /**
      * Variant of the {@link #SSL_shutdown} used by {@link ConscryptEngine}. This version does not
