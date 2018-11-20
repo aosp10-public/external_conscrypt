@@ -751,6 +751,7 @@ class ConscryptFileDescriptorSocket extends OpenSSLSocketImpl
      *
      * @param useSessionTickets True to enable session tickets
      */
+    @dalvik.annotation.compat.UnsupportedAppUsage
     @Override
     public final void setUseSessionTickets(boolean useSessionTickets) {
         sslParameters.setUseSessionTickets(useSessionTickets);
@@ -762,6 +763,7 @@ class ConscryptFileDescriptorSocket extends OpenSSLSocketImpl
      *
      * @param hostname the desired SNI hostname, or null to disable
      */
+    @dalvik.annotation.compat.UnsupportedAppUsage
     @Override
     public final void setHostname(String hostname) {
         sslParameters.setUseSni(hostname != null);
@@ -869,22 +871,6 @@ class ConscryptFileDescriptorSocket extends OpenSSLSocketImpl
     @Override
     byte[] getTlsUnique() {
         return ssl.getTlsUnique();
-    }
-
-    @Override
-    void setTokenBindingParams(int... params) throws SSLException {
-        synchronized (ssl) {
-            if (state != STATE_NEW) {
-                throw new IllegalStateException(
-                        "Cannot set token binding params after handshake has started.");
-            }
-        }
-        ssl.setTokenBindingParams(params);
-    };
-
-    @Override
-    int getTokenBindingParams() {
-        return ssl.getTokenBindingParams();
     }
 
     @Override
