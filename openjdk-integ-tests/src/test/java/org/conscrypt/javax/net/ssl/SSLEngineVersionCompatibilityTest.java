@@ -26,6 +26,8 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.concurrent.Callable;
@@ -47,6 +49,14 @@ import javax.net.ssl.SSLSession;
 import org.conscrypt.Conscrypt;
 import org.conscrypt.TestUtils;
 import org.conscrypt.java.security.TestKeyStore;
+import org.conscrypt.tlswire.TlsTester;
+import org.conscrypt.tlswire.handshake.AlpnHelloExtension;
+import org.conscrypt.tlswire.handshake.ClientHello;
+import org.conscrypt.tlswire.handshake.HandshakeMessage;
+import org.conscrypt.tlswire.handshake.HelloExtension;
+import org.conscrypt.tlswire.handshake.ServerNameHelloExtension;
+import org.conscrypt.tlswire.record.TlsProtocols;
+import org.conscrypt.tlswire.record.TlsRecord;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -471,6 +481,89 @@ public class SSLEngineVersionCompatibilityTest {
     }
 
     @Test
+    public void test_SSLSocket_ClientHello_record_size() throws Exception {
+        // This test checks the size of ClientHello of the default SSLEngine. TLS/SSL handshakes
+        // with older/unpatched F5/BIG-IP appliances are known to stall and time out when
+        // the fragment containing ClientHello is between 256 and 511 (inclusive) bytes long.
+        SSLContext context = SSLContext.getInstance(clientVersion);
+        context.init(null, null, null);
+        SSLEngine e = context.createSSLEngine();
+        e.setUseClientMode(true);
+
+        // Enable SNI extension on the engine (this is typically enabled by default)
+        // to increase the size of ClientHello.
+        Conscrypt.setHostname(e, "sslenginetest.androidcts.google.com");
+
+        // Enable Session Tickets extension on the engine (this is typically enabled
+        // by default) to increase the size of ClientHello.
+        Conscrypt.setUseSessionTickets(e, true);
+
+        TlsRecord firstReceivedTlsRecord = TlsTester.parseRecord(getFirstChunk(e));
+
+        assertEquals("TLS record type", TlsProtocols.HANDSHAKE, firstReceivedTlsRecord.type);
+        HandshakeMessage handshakeMessage = HandshakeMessage.read(
+                new DataInputStream(new ByteArrayInputStream(firstReceivedTlsRecord.fragment)));
+        assertEquals(
+                "HandshakeMessage type", HandshakeMessage.TYPE_CLIENT_HELLO, handshakeMessage.type);
+
+        int fragmentLength = firstReceivedTlsRecord.fragment.length;
+        if ((fragmentLength >= 256) && (fragmentLength <= 511)) {
+            fail("Fragment containing ClientHello is of dangerous length: " + fragmentLength
+                    + " bytes");
+        }
+    }
+
+    @Test
+    public void test_SSLSocket_ClientHello_SNI() throws Exception {
+        SSLContext context = SSLContext.getInstance(clientVersion);
+        context.init(null, null, null);
+        SSLEngine e = context.createSSLEngine();
+        e.setUseClientMode(true);
+
+        Conscrypt.setHostname(e, "sslenginetest.androidcts.google.com");
+
+        ClientHello clientHello = TlsTester.parseClientHello(getFirstChunk(e));
+        ServerNameHelloExtension sniExtension =
+                (ServerNameHelloExtension) clientHello.findExtensionByType(
+                        HelloExtension.TYPE_SERVER_NAME);
+
+        assertNotNull(sniExtension);
+        assertEquals(Arrays.asList("sslenginetest.androidcts.google.com"), sniExtension.hostnames);
+    }
+
+    @Test
+    public void test_SSLSocket_ClientHello_ALPN() throws Exception {
+        String[] protocolList = new String[] { "h2", "http/1.1" };
+
+        SSLContext context = SSLContext.getInstance(clientVersion);
+        context.init(null, null, null);
+        SSLEngine e = context.createSSLEngine();
+        e.setUseClientMode(true);
+
+        Conscrypt.setApplicationProtocols(e, protocolList);
+
+        ClientHello clientHello = TlsTester.parseClientHello(getFirstChunk(e));
+        AlpnHelloExtension alpnExtension =
+                (AlpnHelloExtension) clientHello.findExtensionByType(
+                        HelloExtension.TYPE_APPLICATION_LAYER_PROTOCOL_NEGOTIATION);
+        assertNotNull(alpnExtension);
+        assertEquals(Arrays.asList(protocolList), alpnExtension.protocols);
+    }
+
+    private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
+
+    private static byte[] getFirstChunk(SSLEngine e) throws SSLException {
+        ByteBuffer out = ByteBuffer.allocate(64 * 1024);
+
+        e.wrap(EMPTY_BUFFER, out);
+        out.flip();
+        byte[] data = new byte[out.limit()];
+        out.get(data);
+
+        return data;
+    }
+
+    @Test
     public void test_SSLEngine_TlsUnique() throws Exception {
         // tls_unique isn't supported in TLS 1.3
         assumeTlsV1_2Connection();
@@ -493,177 +586,6 @@ public class SSLEngineVersionCompatibilityTest {
             assertNotNull(clientTlsUnique);
             assertNotNull(serverTlsUnique);
             assertArrayEquals(clientTlsUnique, serverTlsUnique);
-        } finally {
-            pair.close();
-        }
-    }
-
-    @Test
-    public void test_SSLEngine_TokenBinding_Success() throws Exception {
-        TestSSLEnginePair pair = TestSSLEnginePair.create(
-                TestSSLContext.newBuilder()
-                        .clientProtocol(clientVersion)
-                        .serverProtocol(serverVersion).build(),
-                new TestSSLEnginePair.Hooks() {
-                    @Override
-                    void beforeBeginHandshake(SSLEngine client, SSLEngine server) {
-                        try {
-                            Conscrypt.setTokenBindingParams(client, 1, 2);
-                            Conscrypt.setTokenBindingParams(server, 2, 3);
-                        } catch (SSLException e) {
-                            throw new RuntimeException(e);
-                        }
-                        assertEquals(-1, Conscrypt.getTokenBindingParams(client));
-                        assertEquals(-1, Conscrypt.getTokenBindingParams(server));
-                    }
-                });
-        try {
-            assertConnected(pair);
-
-            assertEquals(2, Conscrypt.getTokenBindingParams(pair.client));
-            assertEquals(2, Conscrypt.getTokenBindingParams(pair.server));
-        } finally {
-            pair.close();
-        }
-    }
-
-    @Test
-    public void test_SSLEngine_TokenBinding_NoClientSupport() throws Exception {
-        TestSSLEnginePair pair = TestSSLEnginePair.create(
-                TestSSLContext.newBuilder()
-                        .clientProtocol(clientVersion)
-                        .serverProtocol(serverVersion).build(),
-                new TestSSLEnginePair.Hooks() {
-                    @Override
-                    void beforeBeginHandshake(SSLEngine client, SSLEngine server) {
-                        try {
-                            // Do not enable on client
-                            Conscrypt.setTokenBindingParams(server, 2, 3);
-                        } catch (SSLException e) {
-                            throw new RuntimeException(e);
-                        }
-                        assertEquals(-1, Conscrypt.getTokenBindingParams(client));
-                        assertEquals(-1, Conscrypt.getTokenBindingParams(server));
-                    }
-                });
-        try {
-            assertConnected(pair);
-
-            assertEquals(-1, Conscrypt.getTokenBindingParams(pair.client));
-            assertEquals(-1, Conscrypt.getTokenBindingParams(pair.server));
-        } finally {
-            pair.close();
-        }
-    }
-
-    @Test
-    public void test_SSLEngine_TokenBinding_NoServerSupport() throws Exception {
-        TestSSLEnginePair pair = TestSSLEnginePair.create(
-                TestSSLContext.newBuilder()
-                        .clientProtocol(clientVersion)
-                        .serverProtocol(serverVersion).build(),
-                new TestSSLEnginePair.Hooks() {
-                    @Override
-                    void beforeBeginHandshake(SSLEngine client, SSLEngine server) {
-                        try {
-                            // Do not enable on server
-                            Conscrypt.setTokenBindingParams(client, 2, 3);
-                        } catch (SSLException e) {
-                            throw new RuntimeException(e);
-                        }
-                        assertEquals(-1, Conscrypt.getTokenBindingParams(client));
-                        assertEquals(-1, Conscrypt.getTokenBindingParams(server));
-                    }
-                });
-        try {
-            assertConnected(pair);
-
-            assertEquals(-1, Conscrypt.getTokenBindingParams(pair.client));
-            assertEquals(-1, Conscrypt.getTokenBindingParams(pair.server));
-        } finally {
-            pair.close();
-        }
-    }
-
-    @Test
-    public void test_SSLEngine_TokenBinding_MismatchedSupport() throws Exception {
-        TestSSLEnginePair pair = TestSSLEnginePair.create(
-                TestSSLContext.newBuilder()
-                        .clientProtocol(clientVersion)
-                        .serverProtocol(serverVersion).build(),
-                new TestSSLEnginePair.Hooks() {
-                    @Override
-                    void beforeBeginHandshake(SSLEngine client, SSLEngine server) {
-                        try {
-                            Conscrypt.setTokenBindingParams(client, 2);
-                            Conscrypt.setTokenBindingParams(server, 1, 3);
-                        } catch (SSLException e) {
-                            throw new RuntimeException(e);
-                        }
-                        assertEquals(-1, Conscrypt.getTokenBindingParams(client));
-                        assertEquals(-1, Conscrypt.getTokenBindingParams(server));
-                    }
-                });
-        try {
-            assertConnected(pair);
-
-            assertEquals(-1, Conscrypt.getTokenBindingParams(pair.client));
-            assertEquals(-1, Conscrypt.getTokenBindingParams(pair.server));
-        } finally {
-            pair.close();
-        }
-    }
-
-    @Test
-    public void test_SSLEngine_TokenBinding_MismatchedOrdering() throws Exception {
-        // When the server and client disagree on the preference order, the server should
-        // select the server's most highly preferred value.
-        TestSSLEnginePair pair = TestSSLEnginePair.create(
-                TestSSLContext.newBuilder()
-                        .clientProtocol(clientVersion)
-                        .serverProtocol(serverVersion).build(),
-                new TestSSLEnginePair.Hooks() {
-                    @Override
-                    void beforeBeginHandshake(SSLEngine client, SSLEngine server) {
-                        try {
-                            Conscrypt.setTokenBindingParams(client, 1, 2, 3, 4);
-                            Conscrypt.setTokenBindingParams(server, 3, 2);
-                        } catch (SSLException e) {
-                            throw new RuntimeException(e);
-                        }
-                        assertEquals(-1, Conscrypt.getTokenBindingParams(client));
-                        assertEquals(-1, Conscrypt.getTokenBindingParams(server));
-                    }
-                });
-        try {
-            assertConnected(pair);
-
-            assertEquals(3, Conscrypt.getTokenBindingParams(pair.client));
-            assertEquals(3, Conscrypt.getTokenBindingParams(pair.server));
-        } finally {
-            pair.close();
-        }
-    }
-
-    @Test
-    public void test_SSLEngine_TokenBinding_ExceptionAfterConnect() throws Exception {
-        TestSSLEnginePair pair = TestSSLEnginePair.create(
-                TestSSLContext.newBuilder()
-                        .clientProtocol(clientVersion)
-                        .serverProtocol(serverVersion).build());
-        try {
-            assertConnected(pair);
-
-            try {
-                Conscrypt.setTokenBindingParams(pair.client, 1);
-                fail("setTokenBindingParams after handshake should throw");
-            } catch (IllegalStateException expected) {
-            }
-            try {
-                Conscrypt.setTokenBindingParams(pair.server, 1);
-                fail("setTokenBindingParams after handshake should throw");
-            } catch (IllegalStateException expected) {
-            }
         } finally {
             pair.close();
         }
@@ -707,8 +629,8 @@ public class SSLEngineVersionCompatibilityTest {
             assertEquals(20, serverContextEkm.length);
             assertArrayEquals(clientContextEkm, serverContextEkm);
 
-            // In TLS 1.2, an empty context and a null context are different (RFC 7505, section 4),
-            // but in TLS 1.3 they are the same (draft-ietf-tls-tls13-28, section 7.5).
+            // In TLS 1.2, an empty context and a null context are different (RFC 5705, section 4),
+            // but in TLS 1.3 they are the same (RFC 8446, section 7.5).
             if ("TLSv1.2".equals(negotiatedVersion())) {
                 assertFalse(Arrays.equals(clientEkm, clientContextEkm));
             } else {
