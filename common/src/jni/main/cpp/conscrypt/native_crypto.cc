@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-#include <NetFd.h>
+#include <conscrypt/NetFd.h>
 #include <conscrypt/app_data.h>
 #include <conscrypt/bio_input_stream.h>
 #include <conscrypt/bio_output_stream.h>
 #include <conscrypt/bio_stream.h>
 #include <conscrypt/compat.h>
+#include <conscrypt/compatibility_close_monitor.h>
 #include <conscrypt/jniutil.h>
 #include <conscrypt/logging.h>
 #include <conscrypt/macros.h>
@@ -27,8 +28,9 @@
 #include <conscrypt/netutil.h>
 #include <conscrypt/scoped_ssl_bio.h>
 #include <conscrypt/ssl_error.h>
-#include <nativehelper/ScopedPrimitiveArray.h>
-#include <nativehelper/ScopedUtfChars.h>
+
+#include <nativehelper/scoped_primitive_array.h>
+#include <nativehelper/scoped_utf_chars.h>
 
 #include <limits.h>
 
@@ -53,6 +55,7 @@ using conscrypt::AppData;
 using conscrypt::BioInputStream;
 using conscrypt::BioOutputStream;
 using conscrypt::BioStream;
+using conscrypt::CompatibilityCloseMonitor;
 using conscrypt::NativeCrypto;
 using conscrypt::SslError;
 
@@ -5998,6 +6001,8 @@ static int sslSelect(JNIEnv* env, int type, jobject fdObject, AppData* appData,
         if (timeout_millis <= 0) {
             timeout_millis = -1;
         }
+
+        CompatibilityCloseMonitor monitor(intFd);
 
         result = poll(fds, sizeof(fds) / sizeof(fds[0]), timeout_millis);
         JNI_TRACE("sslSelect %s fd=%d appData=%p timeout_millis=%d => %d",
